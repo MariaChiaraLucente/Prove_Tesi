@@ -23,6 +23,8 @@ def main():
     last_img_ball = None
     font = pygame.font.SysFont(None, 36)
 
+    
+
     running = True
     while running:
         for event in pygame.event.get():
@@ -35,7 +37,7 @@ def main():
         if not game_state.paused:
             # 1. Rilevamento (Visione)
             img_hands, img_ball, detections = vision.update()
-            
+
             if img_hands is None:
                 continue
             last_img_hands = img_hands
@@ -75,7 +77,7 @@ def main():
         pygame.draw.rect(screen, (255, 255, 255), p1.rect)
         pygame.draw.rect(screen, (255, 255, 255), p2.rect)
         pygame.draw.circle(screen, (0, 255, 0), (int(ball.pos[0]), int(ball.pos[1])), ball.radius)
-
+        
         # Anteprime Camera (Miniatura)
         if last_img_hands is not None and last_img_ball is not None:
             img_hands_rgb = cv2.cvtColor(last_img_hands, cv2.COLOR_BGR2RGB)
@@ -88,6 +90,7 @@ def main():
             screen.blit(surf_ball, (180, 10))
 
         pygame.display.flip()
+        #limitare a 60 FPS per evitare di sovraccaricare la CPU
         clock.tick(60)
 
     pygame.quit()

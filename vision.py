@@ -6,6 +6,21 @@ import os
 from config import *
 import mediapipe as mp
 
+import socket
+
+# Configurazione UDP
+UDP_IP = "127.0.0.1"
+UDP_PORT = 5005
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+def send_to_unity(player_id, x_norm, y_norm):
+    
+    # Formato messaggio: "P1,0.5,0.8"
+    message = f"P{player_id}, {x_norm:.2f}, {y_norm:.2f}"
+
+    sock.sendto(message.encode(), (UDP_IP, UDP_PORT))
+
+    
 class VisionManager:
     def __init__(self):
         # Utilizziamo direttamente MediaPipe per il rilevamento delle mani
@@ -41,6 +56,9 @@ class VisionManager:
         img_hands = cv2.cvtColor(img_hands, cv2.COLOR_BGR2RGB)
         results = self.hands.process(img_hands)
 
+        sent_p1 = False
+        sent_p2 = False
+
         if results.multi_hand_landmarks:
             frame_h, frame_w = img.shape[:2]
             hands_data = []
@@ -51,22 +69,24 @@ class VisionManager:
 
                 #estraiamo il landmark 9 (base del dito medio) come punto di riferimento
                 mpc = hand_landmarks.landmark[self.mp_hands.HandLandmark.MIDDLE_FINGER_MCP]
-                mpc_x_norm= mpc.x
+                mpc_x_norm = mpc.x
                 mpc_y_norm = mpc.y
 
                 #convertiamo le coordinate normalizzate in pixel
                 mpc_x = int(mpc_x_norm * frame_w)
                 mpc_y = int(mpc_y_norm * frame_h)
 
-                hands_data.append((mpc_x_norm, mpc_x, mpc_y))
+                hands_data.append((mpc_x_norm, mpc_y_norm, mpc_x, mpc_y))
 
                 hands_data.sort(key=lambda h: h[0])  # ordina per coordinata X normalizzata
 
                 #Player 1 (mano sinistra) e Player 2 (mano destra)
 
             if len(hands_data) >= 1:
-                _, x, y = hands_data[0]
+                x_norm, y_norm, x, y = hands_data[0]
                 hands_positions[0] = (x, y)
+                send_to_unity(1, x_norm, y_norm)
+                sent_p1 = True
                 
                 # Disegna indicatore P1 (BLU)
                 cv2.circle(img_hands, (x, y), 15, (255, 0, 0), cv2.FILLED)
@@ -75,13 +95,20 @@ class VisionManager:
             
             # MANO DESTRA (Player 2)
             if len(hands_data) >= 2:
-                _, x, y = hands_data[1]
+                x_norm, y_norm, x, y = hands_data[1]
                 hands_positions[1] = (x, y)
+                send_to_unity(2, x_norm, y_norm)
+                sent_p2 = True
                 
                 # Disegna indicatore P2 (ROSSO)
                 cv2.circle(img_hands, (x, y), 15, (0, 0, 255), cv2.FILLED)
                 cv2.putText(img_hands, "P2", (x - 10, y - 20), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+        if not sent_p1:
+            send_to_unity(1, -1.0, -1.0)
+        if not sent_p2:
+            send_to_unity(2, -1.0, -1.0)
         
         return img_hands, hands_positions
     
@@ -121,8 +148,8 @@ class VisionManager:
                     radius = max(1, half)
                     ball_data = (cx, cy, radius)
 
-                    if x1< 0 or x2 > CAM_WIDTH:
-                        ball_out = True
+                    '''if x1< 0 or x2 > CAM_WIDTH:
+                        ball_out = True'''
 
                     #stampiamo le coordinate della pallina rilevata con timestamp
                     print(f"[{cv2.getTickCount()/cv2.getTickFrequency():.2f}s] Pallina rilevata a: {ball_data}")
