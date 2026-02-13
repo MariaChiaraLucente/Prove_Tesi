@@ -70,7 +70,7 @@ def main():
        
 
         # 4. Rendering (Grafica)
-        screen.fill((20, 20, 20)) # Sfondo grigio scuro
+        screen.fill((200, 200, 200)) # Sfondo bianco
         
         # Disegno campo e oggetti
         pygame.draw.aaline(screen, (255, 255, 255), (SCREEN_WIDTH//2, 0), (SCREEN_WIDTH//2, SCREEN_HEIGHT))
@@ -82,7 +82,7 @@ def main():
         if last_img_hands is not None and last_img_ball is not None:
             img_hands_rgb = cv2.cvtColor(last_img_hands, cv2.COLOR_BGR2RGB)
             img_ball_rgb = cv2.cvtColor(last_img_ball, cv2.COLOR_BGR2RGB)
-            img_hands_small = cv2.resize(img_hands_rgb, (160, 120))
+            img_hands_small = cv2.resize(img_hands_rgb, (200, 160))
             img_ball_small = cv2.resize(img_ball_rgb, (160, 120))
             surf_hands = pygame.surfarray.make_surface(img_hands_small.swapaxes(0, 1))
             surf_ball = pygame.surfarray.make_surface(img_ball_small.swapaxes(0, 1))
@@ -90,8 +90,7 @@ def main():
             screen.blit(surf_ball, (180, 10))
 
         pygame.display.flip()
-        #limitare a 60 FPS per evitare di sovraccaricare la CPU
-        clock.tick(60)
+
 
     pygame.quit()
     vision.cap.release()
