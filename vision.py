@@ -159,11 +159,16 @@ class VisionManager:
                     x2 = cx + half
                     y2 = cy + half
 
+                    x_norm = cx / CAM_WIDTH
+                    y_norm = cy / CAM_HEIGHT
+                    
                     # Disegna bounding box
                     cv2.rectangle(img_ball, (x1, y1), (x2, y2), (255, 0, 0), 2)
 
                     radius = max(1, half)
                     ball_data = (cx, cy, radius)
+
+                    ball_data_unity= (cx, cy, radius)
 
                     send_ball_to_unity(ball_data)
 
