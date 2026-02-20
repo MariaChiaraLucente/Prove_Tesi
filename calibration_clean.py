@@ -23,10 +23,18 @@ X2_ROI, Y2_ROI = 1089, 552
 #altezza camera 
 # conv cm to px
 # mappatura posizione
-# riconoscimento disco univoco
+# riconoscimento disco univoco--
+        #possibile soluzione: riconoscere un triangolo 
+        # riconoscimento tramite colore?
+            #---> riconoscimento tramite marker colorato su forma
+
+        # riconoscimento tramite marker personalizzato? 
+
+#riconscimento delle mani, max 2, è possibile distinguere le mani di destra e di sinistra
 ############################
 # UDP
 ############################
+
 def init_udp():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     return sock
@@ -138,7 +146,7 @@ def draw_hand(frame, data, player_id, sock):
 ############################
 ball_size = None
 
-def detect_ball(frame, model, sock):
+def detect_ball(frame, black_frame, model, sock):
     global ball_size
     # restituisce le dimensioni del frame (altezza, larghezza)
     h, w = frame.shape[:2]
@@ -176,7 +184,7 @@ def detect_ball(frame, model, sock):
                 )
 
                 draw_ball(frame, x1, y1, x2, y2, cx, cy)
-                projection(frame, x1, x2, y1, y2, cx, cy)
+                projection(black_frame, x1, x2, y1, y2, cx, cy)
                 return (x1, y1, x2, y2, cx, cy)
 
     return None
@@ -188,11 +196,11 @@ def draw_ball(frame, x1, y1, x2, y2, cx, cy):
     
     
 def projection(frame,x1, x2, y1, y2, cx, cy):
-     # Disegna solo la pallina sul nero
+#      # Disegna solo la pallina sul nero
     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
     cv2.circle(frame, (cx, cy), 1, (255, 0, 0), cv2.FILLED)
     cv2.putText(frame, f"Ball ({cx}, {cy})", (cx + 10, cy - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
     
     
 ############################
@@ -209,16 +217,15 @@ def run():
             break
 
         cropped = preprocess_frame(frame)
+        black_frame = np.zeros_like(cropped)
 
         hands_frame = detect_hands(cropped.copy(), hands, sock)
-        detect_ball(cropped, model_shapes, sock)
+        detect_ball(cropped, black_frame, model_shapes, sock)
 
-        black_frame = np.zeros_like(cropped)
-    
 
         cv2.imshow("Calibration_hands", hands_frame)
         cv2.imshow("Calibration_ball", cropped)
-        cv2.imshow("Game", black_frame)
+        cv2.imshow("Projection", black_frame)
 
         if cv2.waitKey(1) == 27:
             break
