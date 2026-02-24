@@ -11,8 +11,21 @@ import numpy as np
 UDP_IP = "127.0.0.1"
 UDP_PORT = 5005
 
-FOCAL_LENGTH_PX = 1079
-W_MPC_WRIST_CM = 4.5
+
+# Carica i file generati dagli script precedenti
+try:
+    with np.load('camera_params.npz') as data:
+        mtx, dist = data['mtx'], data['dist']
+    H_cam_to_proj = np.load('homography_matrix.npy')
+    print("Parametri di calibrazione caricati!")
+except:
+    print("ATTENZIONE: File di calibrazione mancanti!")
+
+# Risoluzione del proiettore (deve corrispondere a quella usata nella calibrazione)
+W_PROJ, H_PROJ = 1920, 1080 
+
+# FOCAL_LENGTH_PX = 1079
+# W_MPC_WRIST_CM = 4.5
 
 # ROI
 X1_ROI, Y1_ROI = 233, 29
@@ -76,13 +89,30 @@ def init_camera():
     return cap
 
 
-############################
-# PREPROCESS FRAME
-############################
-def preprocess_frame(frame):
-    frame = cv2.flip(frame, -1)
-    cropped = frame[Y1_ROI:Y2_ROI, X1_ROI:X2_ROI]
-    return cropped
+# ############################
+# # PREPROCESS FRAME
+# ############################
+# def preprocess_frame(frame):
+#     frame = cv2.flip(frame, -1)
+#     cropped = frame[Y1_ROI:Y2_ROI, X1_ROI:X2_ROI]
+#     return cropped
+
+def apply_projection(cx_crop, cy_crop, H):
+    """
+    Trasforma le coordinate dal frame 'cropped' ai pixel del proiettore.
+    """
+    # 1. Riporta le coordinate del crop a quelle del frame intero (1280x720)
+    cx_full = cx_crop + X1_ROI
+    cy_full = cy_crop + Y1_ROI
+
+    # 2. Crea un punto per la trasformazione
+    # Nota: Sarebbe meglio passare per cv2.undistortPoints se vuoi la precisione massima
+    pt = np.array([[[cx_full, cy_full]]], dtype='float32')
+    
+    # 3. Applica l'Omografia
+    pt_proj = cv2.perspectiveTransform(pt, H)
+    
+    return int(pt_proj[0][0][0]), int(pt_proj[0][0][1])
 
 
 ############################
@@ -111,7 +141,7 @@ def detect_hands(frame, hands, sock):
 
         # distanza mano-camera
         w_px = math.hypot(mpc_x - pip_x, mpc_y - pip_y)
-        distance_cm = (W_MPC_WRIST_CM * FOCAL_LENGTH_PX) / w_px if w_px > 0 else None
+        #distance_cm = (W_MPC_WRIST_CM * FOCAL_LENGTH_PX) / w_px if w_px > 0 else None
 
         hand_data = (mpc.x, mpc.y, mpc_x, mpc_y, pip_x, pip_y)
 
@@ -164,27 +194,42 @@ def detect_ball(frame, black_frame, model, sock):
                 cx = (x1 + x2) // 2
                 cy = (y1 + y2) // 2
 
-                # Memorizziamo la dimensione al primo rilevamento
-                if ball_size is None:
-                    # La dimensione è la media tra larghezza e altezza del box
-                    ball_size = max(1, min(x2 - x1, y2 - y1))
 
-                half = ball_size // 2
-                x1, y1 = cx - half, cy - half
-                x2, y2 = cx + half, cy + half
+            # --- LOGICA DI PROIEZIONE ---
+                    # Trasformiamo la posizione della palla in pixel del proiettore
+                try:
+                        px_proj, py_proj = apply_projection(cx, cy, H_cam_to_proj)
+                        
+                        # Disegna sulla finestra del proiettore
+                        if 0 <= px_proj < W_PROJ and 0 <= py_proj < H_PROJ:
+                            # Disegniamo un cerchio che "insegue" l'oggetto
+                            cv2.circle(black_frame, (px_proj, py_proj), 30, (0, 255, 0), -1)
+                            cv2.putText(black_frame, "TARGET", (px_proj + 40, py_proj), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                except:
+                    pass    
 
-                x1, x2 = max(0, x1), min(w-1, x2)
-                y1, y2 = max(0, y1), min(h-1, y2)
+                # # Memorizziamo la dimensione al primo rilevamento
+                # if ball_size is None:
+                #     # La dimensione è la media tra larghezza e altezza del box
+                #     ball_size = max(1, min(x2 - x1, y2 - y1))
 
-                send_ball_to_unity(
-                    sock,
-                    x1 / w, y1 / h,
-                    x2 / w, y2 / h,
-                    cx / w, cy / h
-                )
+                # half = ball_size // 2
+                # x1, y1 = cx - half, cy - half
+                # x2, y2 = cx + half, cy + half
+
+                # x1, x2 = max(0, x1), min(w-1, x2)
+                # y1, y2 = max(0, y1), min(h-1, y2)
+
+                # send_ball_to_unity(
+                #     sock,
+                #     x1 / w, y1 / h,
+                #     x2 / w, y2 / h,
+                #     cx / w, cy / h
+                # )
 
                 draw_ball(frame, x1, y1, x2, y2, cx, cy)
-                projection(black_frame, x1, x2, y1, y2, cx, cy)
+                #projection(black_frame, x1, x2, y1, y2, cx, cy)
                 return (x1, y1, x2, y2, cx, cy)
 
     return None
@@ -195,37 +240,52 @@ def draw_ball(frame, x1, y1, x2, y2, cx, cy):
     cv2.circle(frame, (cx, cy), 3, (255, 0, 0), cv2.FILLED)
     
     
-def projection(frame,x1, x2, y1, y2, cx, cy):
-#      # Disegna solo la pallina sul nero
-    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    cv2.circle(frame, (cx, cy), 1, (255, 0, 0), cv2.FILLED)
-    cv2.putText(frame, f"Ball ({cx}, {cy})", (cx + 10, cy - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+# def projection(frame,x1, x2, y1, y2, cx, cy):
+# #      # Disegna solo la pallina sul nero
+#     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+#     cv2.circle(frame, (cx, cy), 1, (255, 0, 0), cv2.FILLED)
+#     cv2.putText(frame, f"Ball ({cx}, {cy})", (cx + 10, cy - 10),
+#                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
     
     
 ############################
 # MAIN LOOP
 ############################
 def run():
-    sock = init_udp()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     model_shapes, hands = init_models()
     cap = init_camera()
+
+
+ # Creiamo una finestra a tutto schermo per il proiettore
+        
+    cv2.namedWindow("PROIEZIONE_PARETE", cv2.WND_PROP_FULLSCREEN)
+    cv2.setWindowProperty("PROIEZIONE_PARETE", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        cropped = preprocess_frame(frame)
-        black_frame = np.zeros_like(cropped)
+       # Pre-process (Specchiamento e ritaglio)
+        frame = cv2.flip(frame, -1)
+        cropped = frame[Y1_ROI:Y2_ROI, X1_ROI:X2_ROI].copy()
+
+        # cropped = preprocess_frame(frame)
+        black_frame = np.zeros((H_PROJ, W_PROJ, 3), dtype=np.uint8)
 
         hands_frame = detect_hands(cropped.copy(), hands, sock)
+
         detect_ball(cropped, black_frame, model_shapes, sock)
 
 
-        cv2.imshow("Calibration_hands", hands_frame)
+        #cv2.imshow("Calibration_hands", hands_frame)
         cv2.imshow("Calibration_ball", cropped)
-        cv2.imshow("Projection", black_frame)
+        cv2.imshow("PROIEZIONE_PARETE", black_frame)
+
+
+        #cv2.imshow("Projection", black_frame)
 
         if cv2.waitKey(1) == 27:
             break
