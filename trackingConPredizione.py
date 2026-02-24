@@ -4,6 +4,10 @@ import math
 import numpy as np
 from filterpy.kalman import KalmanFilter
 
+######## non funziona per movimenti veloci
+
+
+
 ############################
 # CONFIG
 ############################
@@ -58,14 +62,16 @@ def make_kalman():
 
     # R: rumore di misura — quanto ti fidi del rilevamento MediaPipe
     # valori alti → il filtro si fida meno della misura, più della predizione
-    kf.R *= 10
+    kf.R *= 4 #diminuendo questo valore, il filtro si fida di più della misura reale
+    # funziona per la velocità 
 
     # P: incertezza iniziale dello stato
     kf.P *= 100
 
     # Q: rumore di processo — quanto può cambiare la velocità tra un frame e l'altro
     # valori alti → il filtro si adatta più velocemente ai cambi di direzione
-    kf.Q *= 0.5
+    kf.Q *= 2 #segue bene la direzione della mano
+
 
     return kf
 
@@ -362,6 +368,8 @@ def detect_and_track(frame, hands_model):
 def run():
     hands_model = init_hands()
     cap         = init_camera()
+    #provo ad aumentare il framerate
+    cap.set(cv2.CAP_PROP_FPS, 60)
 
     print("Tasti: [r] reset | [ESC] esci")
 
