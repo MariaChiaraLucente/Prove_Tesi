@@ -20,19 +20,21 @@ try:
     
     # Calibrazione proiezione (omografia)
     H_cam_to_proj = np.load('homography_matrix.npy')
-    print("Parametri di calibrazione caricati (omografia)!")
+    print("✓ homography_matrix.npy caricata!")
 except:
-    print("ATTENZIONE: File di calibrazione mancanti!")
+    H_cam_to_proj = None
+    print("ATTENZIONE: homography_matrix.npy mancante!")
 
-# Risoluzione del proiettore (deve corrispondere a quella usata nella calibrazione)
-W_PROJ, H_PROJ = 1920, 1080 
+try:
+    crop_data = np.load('crop_params.npy')
+    X1_ROI, Y1_ROI, X2_ROI, Y2_ROI = map(int, crop_data)
+    print(f"✓ crop_params.npy caricata: ({X1_ROI},{Y1_ROI}) → ({X2_ROI},{Y2_ROI})")
+except:
+    print("ATTENZIONE: crop_params.npy mancante — uso valori di fallback!")
+    X1_ROI, Y1_ROI = 233, 29
+    X2_ROI, Y2_ROI = 1089, 552
 
-# FOCAL_LENGTH_PX = 1079
-# W_MPC_WRIST_CM = 4.5
-
-# ROI
-X1_ROI, Y1_ROI = 233, 29
-X2_ROI, Y2_ROI = 1089, 552
+W_PROJ, H_PROJ = 1920, 1200
 
 #ris camera
 #ris crop
@@ -92,13 +94,32 @@ def init_camera():
     return cap
 
 
-# ############################
-# # PREPROCESS FRAME
-# ############################
-# def preprocess_frame(frame):
-#     frame = cv2.flip(frame, -1)
-#     cropped = frame[Y1_ROI:Y2_ROI, X1_ROI:X2_ROI]
-#     return cropped
+# Calcola PLAY_RECT come percentuale del crop (10% margine per lato)
+CROP_W = X2_ROI - X1_ROI
+CROP_H = Y2_ROI - Y1_ROI
+margin_x = int(CROP_W * 0.10)
+margin_y = int(CROP_H * 0.10)
+
+PLAY_RECT = {
+    "x1": margin_x,
+    "y1": margin_y,
+    "x2": CROP_W - margin_x,
+    "y2": CROP_H - margin_y
+}
+
+def is_inside_play_rect(cx, cy):
+    return (PLAY_RECT["x1"] < cx < PLAY_RECT["x2"] and
+            PLAY_RECT["y1"] < cy < PLAY_RECT["y2"])
+
+def get_play_rect_proj():
+    """Trasforma i 4 angoli del rettangolo di gioco in coordinate proiettore."""
+    r = PLAY_RECT
+    corners = [(r["x1"], r["y1"]), (r["x2"], r["y1"]),
+               (r["x2"], r["y2"]), (r["x1"], r["y2"])]
+    
+    proj_corners = [apply_projection(x, y, H_cam_to_proj) for x, y in corners]
+    return proj_corners
+
 
 def apply_projection(cx_crop, cy_crop, H):
     """
@@ -178,8 +199,10 @@ def detect_ball(frame, black_frame, model, sock):
     global ball_size
     # restituisce le dimensioni del frame (altezza, larghezza)
     h, w = frame.shape[:2]
+    bh, bw = black_frame.shape[:2]
 
     results = model(frame, stream=True, verbose=False)
+
 
     for r in results:
         for box in r.boxes:
@@ -193,6 +216,7 @@ def detect_ball(frame, black_frame, model, sock):
                 cy = (y1 + y2) // 2
 
 
+          
             # --- LOGICA DI PROIEZIONE ---
                     # Trasformiamo la posizione della palla in pixel del proiettore
                 try:
@@ -200,31 +224,31 @@ def detect_ball(frame, black_frame, model, sock):
                         
                         # Disegna sulla finestra del proiettore
                         if 0 <= px_proj < W_PROJ and 0 <= py_proj < H_PROJ:
-                            # Disegniamo un cerchio che "insegue" l'oggetto
-                            cv2.circle(black_frame, (px_proj, py_proj), 30, (0, 255, 0), -1)
+                            # Disegniamo un quadrato che "insegue" l'oggetto
+                            cv2.rectangle(black_frame, (px_proj-15, py_proj-15), (px_proj+15, py_proj+15), (0, 255, 0), -1)
                             cv2.putText(black_frame, "TARGET", (px_proj + 40, py_proj), 
                                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                 except:
                     pass    
 
-                # # Memorizziamo la dimensione al primo rilevamento
-                # if ball_size is None:
-                #     # La dimensione è la media tra larghezza e altezza del box
-                #     ball_size = max(1, min(x2 - x1, y2 - y1))
+                 # Memorizziamo la dimensione al primo rilevamento
+                if ball_size is None:
+                    # La dimensione è la media tra larghezza e altezza del box
+                    ball_size = max(1, min(x2 - x1, y2 - y1))
 
-                # half = ball_size // 2
-                # x1, y1 = cx - half, cy - half
-                # x2, y2 = cx + half, cy + half
+                half = ball_size // 2
+                x1, y1 = cx - half, cy - half
+                x2, y2 = cx + half, cy + half
 
-                # x1, x2 = max(0, x1), min(w-1, x2)
-                # y1, y2 = max(0, y1), min(h-1, y2)
+                x1, x2 = max(0, x1), min(w-1, x2)
+                y1, y2 = max(0, y1), min(h-1, y2)
 
-                # send_ball_to_unity(
-                #     sock,
-                #     x1 / w, y1 / h,
-                #     x2 / w, y2 / h,
-                #     cx / w, cy / h
-                # )
+                send_ball_to_unity(
+                     sock,
+                     x1 / w, y1 / h,
+                     x2 / w, y2 / h,
+                     cx / w, cy / h
+                 )
 
                 draw_ball(frame, x1, y1, x2, y2, cx, cy)
                 #projection(black_frame, x1, x2, y1, y2, cx, cy)
@@ -269,17 +293,39 @@ def run():
         # Pre-process (Specchiamento e ritaglio)
         frame = cv2.flip(frame, -1)
         cropped = frame[Y1_ROI:Y2_ROI, X1_ROI:X2_ROI].copy()
+        #mask= np.zeros_like(cropped)
+        #dimensioni: (866x 523)
+        #mask[:] = (255, 255, 255)
 
         # cropped = preprocess_frame(frame)
         black_frame = np.zeros((H_PROJ, W_PROJ, 3), dtype=np.uint8)
-        black_frame = cv2.flip(black_frame, 1)  # ← flip orizzontale
+        black_frame = cv2.flip(black_frame, 1)
 
+
+        #campo di rilevamento, oltre questo rettangolo non viene vista la pallina
+
+        #cv2.draw.rectangle(mask, (0, 0), (mask.shape[1], mask.shape[0]), (255, 255, 255), -1)
+
+        # dopo il crop, prima di detect_ball
+        cv2.rectangle(
+            cropped,
+            (PLAY_RECT["x1"], PLAY_RECT["y1"]),
+            (PLAY_RECT["x2"], PLAY_RECT["y2"]),
+            (0, 165, 255), 2  # arancione
+        )
+        
         hands_frame = detect_hands(cropped.copy(), hands, sock)
         detect_ball(cropped, black_frame, model_shapes, sock)
+
+          # ← flip orizzontale
 
         #cv2.imshow("Calibration_hands", hands_frame)
         cv2.imshow("Calibration_ball", cropped)
         cv2.imshow("PROIEZIONE_PARETE", black_frame)
+
+
+        #cv2.imshow("Mask", mask)
+        
 
         #cv2.imshow("Projection", black_frame)
 

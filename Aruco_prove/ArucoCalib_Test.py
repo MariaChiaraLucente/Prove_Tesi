@@ -9,12 +9,13 @@ import time
 # print("📍 Caricamento parametri camera...")
 # data = np.load('camera_params.npz')
 # mtx, dist = data['mtx'], data['dist']
-# print(f"✓ Parametri camera caricati: mtx shape={mtx.shape}, dist shape={dist.shape}")
+# print(f"✓ PSarametri camera caricati: mtx shape={mtx.shape}, dist shape={dist.shape}")
 # print(f"  Centro principale: ({mtx[0,2]:.1f}, {mtx[1,2]:.1f})")
 
 # 2. Configurazione proiettore e ArUco
 print("📍 Configurazione ArUco...")
-W_PROJ, H_PROJ = 1920, 1080
+W_PROJ, H_PROJ =  1920, 1200
+
 size = 200
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
 print(f"✓ Dizionario ArUco caricato: DICT_6X6_250")
@@ -24,10 +25,10 @@ print(f"✓ Parametri detector: OK")
 # Coordinate SORGENTE (i pixel esatti sul proiettore)
 # Ordine: ID 0, 1, 2, 3 (Alto-SX, Alto-DX, Basso-DX, Basso-SX)
 pts_projector = np.array([
-    [0, 0], 
-    [W_PROJ - 1, 0], 
-    [W_PROJ - 1, H_PROJ - 1], 
-    [0, H_PROJ - 1]
+    [20, 20],
+    [W_PROJ - 21, 20],
+    [W_PROJ - 21, H_PROJ - 21],
+    [20, H_PROJ - 21]
 ], dtype=np.float32)
 
 cap = cv2.VideoCapture(1)
@@ -35,7 +36,7 @@ cap = cv2.VideoCapture(1)
 print("📍 Apertura camera...")
 if not cap.isOpened():
     print("❌ Camera 1 non disponibile, provo camera 0...")
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(1)
     if not cap.isOpened():
         print("❌ Nessuna camera disponibile!")
         exit(1)
@@ -112,9 +113,42 @@ while True:
             print(f"✓ Matrice di Omografia salvata: homography_matrix.npy")
             print(f"  Shape: {H.shape}, Determinante: {np.linalg.det(H):.6f}")
             print(f"\nCalibrazione completata in {time.time() - start_time:.1f}s")
+
+            # ── CALCOLO CROP tramite omografia inversa ───────────────────
+            # I bordi reali della proiezione in pixel proiettore sono (0,0)-(W,H).
+            # Usiamo H_inv per mapparli nel frame camera → crop esatto.
+
+            corners_proj = np.array([
+                [[0,       0      ]],   # Alto-SX
+                [[W_PROJ,  0      ]],   # Alto-DX
+                [[W_PROJ,  H_PROJ ]],   # Basso-DX
+                [[0,       H_PROJ ]]    # Basso-SX
+            ], dtype='float32')
+
+            H_inv = np.linalg.inv(H)
+            corners_cam = cv2.perspectiveTransform(corners_proj, H_inv)
+
+            X1 = int(np.min(corners_cam[:, 0, 0]))
+            Y1 = int(np.min(corners_cam[:, 0, 1]))
+            X2 = int(np.max(corners_cam[:, 0, 0]))
+            Y2 = int(np.max(corners_cam[:, 0, 1]))
+
+            # Clamp ai limiti del frame
+            X1 = max(0, X1)
+            Y1 = max(0, Y1)
+            X2 = min(frame_width,  X2)
+            Y2 = min(frame_height, Y2)
+
+            np.save("crop_params.npy", np.array([X1, Y1, X2, Y2]))
+            print(f"✓ crop_params.npy salvata")
+            print(f"  X1={X1}, Y1={Y1}, X2={X2}, Y2={Y2}")
+            print(f"  Dimensioni crop: {X2-X1} x {Y2-Y1} px")
+
+            print(f"\n✓ Calibrazione completata in {time.time()-start_time:.1f}s")
             break
         else:
-            print("❌ Errore: non tutti i 4 marker sono visibili!")
+            print("\n❌ Non tutti i 4 marker sono visibili, riprova.")
+            break
     elif key & 0xFF == ord('q'):
         print("\n📍 Uscita...")
         break

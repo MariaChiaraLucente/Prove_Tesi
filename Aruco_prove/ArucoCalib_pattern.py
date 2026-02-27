@@ -3,7 +3,7 @@ import numpy as np
 import cv2.aruco as aruco
 
 # Risoluzione del tuo proiettore (cambiala se diversa)
-W_PROJ, H_PROJ = 1920, 1080
+W_PROJ, H_PROJ = 1920, 1200
 
 # Crea un'immagine bianca
 img = np.ones((H_PROJ, W_PROJ, 3), dtype=np.uint8) * 255
@@ -13,7 +13,7 @@ aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)  # DEVE CORRISPON
 # Dimensione marker: 200px
 size = 200
 # Angoli: alto-sx, alto-dx, basso-dx, basso-sx
-positions = [(20,0), (W_PROJ-size, 0), (W_PROJ-size, H_PROJ-size), (0, H_PROJ-size)]
+positions = [(20, 20), (W_PROJ - size - 20, 20), (W_PROJ - size - 20, H_PROJ - size - 20), (20, H_PROJ - size - 20)]
 
 for i, pos in enumerate(positions):
     marker_img = aruco.generateImageMarker(aruco_dict, i, size)
