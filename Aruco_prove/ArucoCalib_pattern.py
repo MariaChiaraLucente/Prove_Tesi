@@ -5,20 +5,34 @@ import cv2.aruco as aruco
 # Risoluzione del tuo proiettore (cambiala se diversa)
 W_PROJ, H_PROJ = 1920, 1200
 
-# Crea un'immagine bianca
+# CONFIGURAZIONE GRIGLIA
+ROWS = 3       # Numero di righe
+COLS = 4       # Numero di colonne
+MARKER_SIZE = 150
+MARGIN_X = 100
+MARGIN_Y = 80
+
 img = np.ones((H_PROJ, W_PROJ, 3), dtype=np.uint8) * 255
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)  # DEVE CORRISPONDERE a ArucoCreation.py!
 
-# Inseriamo 4 marker agli angoli (ID 0, 1, 2, 3)
-# Dimensione marker: 200px
-size = 200
-# Angoli: alto-sx, alto-dx, basso-dx, basso-sx
-positions = [(20, 20), (W_PROJ - size - 20, 20), (W_PROJ - size - 20, H_PROJ - size - 20), (20, H_PROJ - size - 20)]
+# Calcola spaziatura
+step_x = (W_PROJ - 2 * MARGIN_X - MARKER_SIZE) / (COLS - 1) if COLS > 1 else 0
+step_y = (H_PROJ - 2 * MARGIN_Y - MARKER_SIZE) / (ROWS - 1) if ROWS > 1 else 0
 
-for i, pos in enumerate(positions):
-    marker_img = aruco.generateImageMarker(aruco_dict, i, size)
-    marker_rgb = cv2.cvtColor(marker_img, cv2.COLOR_GRAY2BGR)
-    img[pos[1]:pos[1]+size, pos[0]:pos[0]+size] = marker_rgb
+marker_id = 0
+for r in range(ROWS):
+    for c in range(COLS):
+        # Calcola posizione top-left
+        x = int(MARGIN_X + c * step_x)
+        y = int(MARGIN_Y + r * step_y)
+        
+        marker_img = aruco.generateImageMarker(aruco_dict, marker_id, MARKER_SIZE)
+        marker_rgb = cv2.cvtColor(marker_img, cv2.COLOR_GRAY2BGR)
+        img[y:y+MARKER_SIZE, x:x+MARKER_SIZE] = marker_rgb
+        
+        # Scrivi ID per debug
+        cv2.putText(img, str(marker_id), (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (50,50,50), 2)
+        marker_id += 1
 
-cv2.imwrite("calib_pattern.png", img)
-print("Immagine 'calib_pattern.png' creata. Proiettala a tutto schermo.")
+cv2.imwrite("calib_pattern_grid.png", img)
+print(f"Immagine 'calib_pattern_grid.png' creata con {ROWS*COLS} marker.")

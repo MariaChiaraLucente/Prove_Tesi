@@ -12,6 +12,7 @@ UDP_IP = "127.0.0.1"
 UDP_PORT = 5005
 
 
+
 # Carica i file generati dagli script precedenti
 try:
     # Calibrazione camera (commentata - non usata)
@@ -35,6 +36,15 @@ except:
     X2_ROI, Y2_ROI = 1089, 552
 
 W_PROJ, H_PROJ = 1920, 1200
+
+COLOR_RANGES = {
+        'red': ([160, 40, 200], [180, 120, 255]),
+        'green': ([50, 40, 50], [90, 255, 255]),
+        'blue': ([90, 50, 50], [120, 255, 255]),
+        'yellow': ([20, 100, 100], [30, 255, 255]),
+        'purple': ([125, 50, 50], [140, 255, 255]),
+        'custom': ([80,182,59], [88,222, 77])
+    }
 
 #ris camera
 #ris crop
@@ -88,7 +98,7 @@ def init_models():
 # INIT CAMERA
 ############################
 def init_camera():
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     return cap
@@ -97,28 +107,7 @@ def init_camera():
 # Calcola PLAY_RECT come percentuale del crop (10% margine per lato)
 CROP_W = X2_ROI - X1_ROI
 CROP_H = Y2_ROI - Y1_ROI
-margin_x = int(CROP_W * 0.10)
-margin_y = int(CROP_H * 0.10)
 
-PLAY_RECT = {
-    "x1": margin_x,
-    "y1": margin_y,
-    "x2": CROP_W - margin_x,
-    "y2": CROP_H - margin_y
-}
-
-def is_inside_play_rect(cx, cy):
-    return (PLAY_RECT["x1"] < cx < PLAY_RECT["x2"] and
-            PLAY_RECT["y1"] < cy < PLAY_RECT["y2"])
-
-def get_play_rect_proj():
-    """Trasforma i 4 angoli del rettangolo di gioco in coordinate proiettore."""
-    r = PLAY_RECT
-    corners = [(r["x1"], r["y1"]), (r["x2"], r["y1"]),
-               (r["x2"], r["y2"]), (r["x1"], r["y2"])]
-    
-    proj_corners = [apply_projection(x, y, H_cam_to_proj) for x, y in corners]
-    return proj_corners
 
 
 def apply_projection(cx_crop, cy_crop, H):
@@ -196,6 +185,18 @@ def draw_hand(frame, data, player_id, sock):
 ball_size = None
 
 def detect_ball(frame, black_frame, model, sock):
+
+    #trasformiamo in HSV per creare una maschera di colore
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    # setto il range di colore per il verde
+    lower_color, upper_color = COLOR_RANGES["green"]
+
+    # creo la maschera per il verde, l'immagina diventa bianca se il pixel è verde, altrimenti è nera
+    color_mask = cv2.inRange(hsv, np.array(lower_color), np.array(upper_color))
+
+    # soglia minima di verde all'interno del box per considerarlo un triangolo verde, ed essere rilevato
+    min_green_ratio = 0.10 # 20%
+
     global ball_size
     # restituisce le dimensioni del frame (altezza, larghezza)
     h, w = frame.shape[:2]
@@ -207,14 +208,19 @@ def detect_ball(frame, black_frame, model, sock):
     for r in results:
         for box in r.boxes:
             # classe circle con confidenza > 0.6
-            if box.conf[0] > 0.6 and int(box.cls[0]) == 0:
-                #mappo le coordinare del box che circonda la palla in pixel
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
+            if box.conf[0] > 0.4 and int(box.cls[0]) == 0:
+             #setto le coordinate del box
+             x1, y1, x2, y2 = map(int, box.xyxy[0])
+                #creo una maschera del box che corrisponde alla maschera di colore verde, quindi 
+                # ritaglio solo il pezzo della maschera dentro il box del triangolo e conti quanti pixel bianchi ci sono.
+             box_mask = color_mask[y1:y2, x1:x2]
+                #calcolo la percentuale di verde all'interno del box, se è superiore alla soglia allora disegno il box del triangolo
+             green_ratio = np.count_nonzero(box_mask) / box_mask.size if box_mask.size else 0.0
+             if green_ratio >= min_green_ratio:
 
                 # centro della palla ovvero il punto medio del box, in pixel
                 cx = (x1 + x2) // 2
                 cy = (y1 + y2) // 2
-
 
           
             # --- LOGICA DI PROIEZIONE ---
@@ -231,6 +237,7 @@ def detect_ball(frame, black_frame, model, sock):
                 except:
                     pass    
 
+            
                  # Memorizziamo la dimensione al primo rilevamento
                 if ball_size is None:
                     # La dimensione è la media tra larghezza e altezza del box
@@ -307,13 +314,6 @@ def run():
         #cv2.draw.rectangle(mask, (0, 0), (mask.shape[1], mask.shape[0]), (255, 255, 255), -1)
 
         # dopo il crop, prima di detect_ball
-        cv2.rectangle(
-            cropped,
-            (PLAY_RECT["x1"], PLAY_RECT["y1"]),
-            (PLAY_RECT["x2"], PLAY_RECT["y2"]),
-            (0, 165, 255), 2  # arancione
-        )
-        
         hands_frame = detect_hands(cropped.copy(), hands, sock)
         detect_ball(cropped, black_frame, model_shapes, sock)
 

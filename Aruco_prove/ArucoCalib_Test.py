@@ -16,22 +16,35 @@ import time
 print("📍 Configurazione ArUco...")
 W_PROJ, H_PROJ =  1920, 1200
 
-size = 200
+# CONFIGURAZIONE GRIGLIA (Deve matchare ArucoCalib_pattern.py)
+ROWS = 3
+COLS = 4
+MARKER_SIZE = 150
+MARGIN_X = 100
+MARGIN_Y = 80
+
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
 print(f"✓ Dizionario ArUco caricato: DICT_6X6_250")
 parameters = aruco.DetectorParameters()
 print(f"✓ Parametri detector: OK")
 
-# Coordinate SORGENTE (i pixel esatti sul proiettore)
-# Ordine: ID 0, 1, 2, 3 (Alto-SX, Alto-DX, Basso-DX, Basso-SX)
-pts_projector = np.array([
-    [20, 20],
-    [W_PROJ - 21, 20],
-    [W_PROJ - 21, H_PROJ - 21],
-    [20, H_PROJ - 21]
-], dtype=np.float32)
+# Genera mappa {ID: (x, y)} dei CENTRI dei marker sul proiettore
+MARKER_MAP = {}
+step_x = (W_PROJ - 2 * MARGIN_X - MARKER_SIZE) / (COLS - 1) if COLS > 1 else 0
+step_y = (H_PROJ - 2 * MARGIN_Y - MARKER_SIZE) / (ROWS - 1) if ROWS > 1 else 0
+mid_offset = MARKER_SIZE / 2.0
 
-cap = cv2.VideoCapture(1)
+marker_count = 0
+for r in range(ROWS):
+    for c in range(COLS):
+        x = MARGIN_X + c * step_x
+        y = MARGIN_Y + r * step_y
+        MARKER_MAP[marker_count] = (x + mid_offset, y + mid_offset)
+        marker_count += 1
+
+print(f"✓ Configurazione attesa: {len(MARKER_MAP)} marker in griglia {ROWS}x{COLS}")
+
+cap = cv2.VideoCapture(0)
 
 print("📍 Apertura camera...")
 if not cap.isOpened():
@@ -79,44 +92,62 @@ while True:
     # Log sulla rilevazione
     if ids is not None:
         detected_count = len(ids)
-        detected_ids = sorted(ids.flatten().tolist())
-        print(f"  ✓ Marker rilevati: {detected_ids} ({detected_count}/4)")
-        if detected_count == 4:
+        # detected_ids = sorted(ids.flatten().tolist())
+        # print(f"  ✓ Marker rilevati: {detected_ids} ({detected_count}/{len(MARKER_MAP)})")
+        if detected_count >= 4:
             markers_found_count += 1
     else:
         if frame_count % 60 != 0:
             print(f"  ✗ Nessun marker rilevato")
 
-    if ids is not None and len(ids) == 4:
-        # Ordiniamo i punti rilevati per matchare pts_projector (ID 0,1,2,3)
-        pts_camera = np.zeros((4, 2), dtype=np.float32)
+    # Raccogli i punti validi
+    valid_pts_camera = []
+    valid_pts_projector = []
+
+    if ids is not None:
         for i in range(len(ids)):
-            idx = ids[i][0]
-            if idx < 4:
-                # Usiamo il centro del marker come punto di riferimento
-                pts_camera[idx] = np.mean(corners[i][0], axis=0)
-                print(f"    - ID {idx}: ({pts_camera[idx][0]:.1f}, {pts_camera[idx][1]:.1f})")
+            mid = ids[i][0]
+            if mid in MARKER_MAP:
+                center = np.mean(corners[i][0], axis=0)
+                valid_pts_camera.append(center)
+                valid_pts_projector.append(MARKER_MAP[mid])
         
+    if len(valid_pts_camera) >= 4:
         # Disegna per feedback visivo
         aruco.drawDetectedMarkers(frame, corners, ids)
-        print("  ★ Tutti i 4 marker rilevati - puoi premere 's' per salvare")
+        cv2.putText(frame, f"Marker validi: {len(valid_pts_camera)}/{len(MARKER_MAP)}", (20, 40), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
     cv2.imshow('Calibrazione Sistema', frame)
     
     key = cv2.waitKey(1)
     if key & 0xFF == ord('s'):
-        if ids is not None and len(ids) == 4:
-            print("\n📍 Calcolo omografia...")
+        if len(valid_pts_camera) >= 4:
+            print(f"\n📍 Calcolo omografia con {len(valid_pts_camera)} punti...")
+            
+            src_pts = np.array(valid_pts_camera, dtype=np.float32)
+            dst_pts = np.array(valid_pts_projector, dtype=np.float32)
+
             # CALCOLO OMOGRAFIA: Da Camera a Proiettore
-            H, _ = cv2.findHomography(pts_camera, pts_projector)
-            np.save("homography_matrix.npy", H)
+            # Usa RANSAC per robustezza (ignora outlier)
+            H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+            
+            # --- VERIFICA PRECISIONE (Errore di Riproiezione) ---
+            # Proiettiamo i punti camera usando H e vediamo quanto distano dai punti reali del proiettore
+            pts_proj_estimated = cv2.perspectiveTransform(src_pts.reshape(-1, 1, 2), H).reshape(-1, 2)
+            error = np.mean(np.linalg.norm(dst_pts - pts_proj_estimated, axis=1))
+            
             print(f"✓ Matrice di Omografia salvata: homography_matrix.npy")
-            print(f"  Shape: {H.shape}, Determinante: {np.linalg.det(H):.6f}")
+            print(f"  ★ Errore medio di riproiezione: {error:.2f} pixel")
+            if error < 3.0: print("    -> Calibrazione ECCELLENTE.")
+            elif error < 6.0: print("    -> Calibrazione BUONA.")
+            else: print("    -> ATTENZIONE: Errore alto. Verifica distorsione lente o planarità superficie.")
+
+            np.save("homography_matrix.npy", H)
+            print(f"  Punti usati: {np.sum(mask)}/{len(src_pts)}")
             print(f"\nCalibrazione completata in {time.time() - start_time:.1f}s")
 
             # ── CALCOLO CROP tramite omografia inversa ───────────────────
-            # I bordi reali della proiezione in pixel proiettore sono (0,0)-(W,H).
-            # Usiamo H_inv per mapparli nel frame camera → crop esatto.
 
             corners_proj = np.array([
                 [[0,       0      ]],   # Alto-SX
@@ -147,8 +178,8 @@ while True:
             print(f"\n✓ Calibrazione completata in {time.time()-start_time:.1f}s")
             break
         else:
-            print("\n❌ Non tutti i 4 marker sono visibili, riprova.")
-            break
+            print(f"\n❌ Trovati solo {len(valid_pts_camera)} marker. Ne servono almeno 4.")
+            
     elif key & 0xFF == ord('q'):
         print("\n📍 Uscita...")
         break
