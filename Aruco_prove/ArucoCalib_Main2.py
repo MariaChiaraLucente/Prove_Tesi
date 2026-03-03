@@ -86,8 +86,24 @@ def init_models():
 ############################
 def init_camera():
     cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
+    ###controllo fps camera###
+    fps_tests = [30, 60, 90, 120]
+    max_fps = 0
+    for fps in fps_tests:
+        cap.set(cv2.CAP_PROP_FPS, fps)
+        actual_fps = cap.get(cv2.CAP_PROP_FPS)
+        print(f"Richiesto {fps} FPS → Ottenuto: {actual_fps} FPS")
+        if actual_fps > max_fps:
+            max_fps = actual_fps
+    
+    print(f"✓ FPS massimo supportato: {max_fps}")
+    print("============================\n")
+    
+    # Imposta il massimo rilevato
+    cap.set(cv2.CAP_PROP_FPS, max_fps)
+    
     return cap
 
 
@@ -202,7 +218,8 @@ def detect_ball(frame, black_frame, model, sock):
     # pred_cx, pred_cy = int(prediction[0, 0]), int(prediction[1, 0])
 
     # Passiamo il device esplicito (0 = prima GPU, 'cpu' = processore)
-    results = model(frame, stream=True, verbose=False, device=DEVICE)
+    # imgsz=416 invece di default 640 → ~2x più veloce con accuratezza simile
+    results = model(frame, stream=True, verbose=False, device=DEVICE, imgsz=416)
     ball_found = False
 
     for r in results:
@@ -342,11 +359,36 @@ def run():
     model_shapes, hands = init_models()
     cap = init_camera()
 
+    # YOLO Warm-up e performance test
+    print("\n=== YOLO PERFORMANCE TEST ===")
+    dummy = np.zeros((523, 856, 3), dtype=np.uint8)  # Simula cropped frame
+    warmup_times = []
+    for i in range(10):
+        t_start = time.time()
+        _ = model_shapes(dummy, device=DEVICE, verbose=False, imgsz=416)
+        warmup_times.append((time.time() - t_start) * 1000)
+    
+    print(f"YOLO Warm-up (10 frames):")
+    print(f"  Min: {min(warmup_times):.1f}ms")
+    print(f"  Max: {max(warmup_times):.1f}ms")
+    print(f"  Avg: {np.mean(warmup_times):.1f}ms")
+    print(f"  FPS teorico: {1000/np.mean(warmup_times):.1f}")
+    print("============================\n")
+
     # Creiamo una finestra a tutto schermo per il proiettore
     cv2.namedWindow("PROIEZIONE_PARETE", cv2.WND_PROP_FULLSCREEN)
     cv2.setWindowProperty("PROIEZIONE_PARETE", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
+    # Pre-alloca black_frame una sola volta (performance)
+    black_frame = np.zeros((H_PROJ, W_PROJ, 3), dtype=np.uint8)
+    
     prev_time = 0
+    frame_count = 0
+    
+    # Statistiche YOLO runtime
+    yolo_times = []
+    yolo_fps_avg = 0
+    YOLO_SKIP = 1  # Processa YOLO ogni N frame (1=sempre, 2=metà, 3=un terzo)
 
     while True:
         curr_time = time.time()
@@ -361,19 +403,38 @@ def run():
         frame = cv2.flip(frame, -1)
         cropped = frame[Y1_ROI:Y2_ROI, X1_ROI:X2_ROI].copy()
 
-        # Frame nero per il proiettore
-        black_frame = np.zeros((H_PROJ, W_PROJ, 3), dtype=np.uint8)
-        # NOTA: Rimosso cv2.flip(black_frame, 1) per mantenere la proiezione corretta
+        # Resetta frame proiettore (riutilizzo memoria)
+        black_frame.fill(0)
 
-        # Rilevamento
+        # Rilevamento mani (sempre)
         hands_frame = detect_hands(cropped.copy(), hands, sock)
-        detect_ball(cropped, black_frame, model_shapes, sock)
+        
+        # Rilevamento palla (con frame skipping opzionale + timing)
+        frame_count += 1
+        if frame_count % YOLO_SKIP == 0:
+            yolo_t1 = time.time()
+            detect_ball(cropped, black_frame, model_shapes, sock)
+            yolo_t2 = time.time()
+            
+            yolo_time_ms = (yolo_t2 - yolo_t1) * 1000
+            yolo_times.append(yolo_time_ms)
+            
+            # Mantieni solo ultimi 30 campioni
+            if len(yolo_times) > 30:
+                yolo_times.pop(0)
+            
+            yolo_fps_avg = 1000 / np.mean(yolo_times) if yolo_times else 0
 
-        # Mostra FPS sul frame di debug
+        # Mostra FPS e statistiche YOLO sul frame di debug
         cv2.putText(cropped, f"FPS: {int(fps)}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+        
+        if yolo_times:
+            yolo_info = f"YOLO: {np.mean(yolo_times):.1f}ms ({yolo_fps_avg:.1f} FPS)"
+            cv2.putText(cropped, yolo_info, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
         cv2.imshow("Calibration_ball", cropped)
         cv2.imshow("PROIEZIONE_PARETE", black_frame)
+        cv2.imshow("Hands", hands_frame)
 
         if cv2.waitKey(1) == 27:
             break
